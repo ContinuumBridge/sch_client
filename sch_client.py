@@ -18,6 +18,7 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.MIMEImage import MIMEImage
+import subprocess
 
 config = {}
 # Production
@@ -72,6 +73,7 @@ class Connection(object):
 
     def readConfig(self):
         global config
+        subprocess.call(["git", "pull"])
         configFile = "sch_client.config"
         try:
             with open(configFile, 'r') as f:
@@ -86,7 +88,7 @@ class Connection(object):
                 config[c] = True
             elif c.lower in ("false", "f", "0"):
                 config[c] = False
-        reactor.callLater(30, self.readConfig)
+        reactor.callLater(300, self.readConfig)
 
     def connect(self) :
         auth_url = "http://" + CB_ADDRESS + "/api/client/v1/client_auth/login/"
@@ -122,7 +124,7 @@ class Connection(object):
                     #print("Found: ", json.dumps(b, indent=4))
                     if bid not in self.lastActive:
                         self.lastActive[bid] = 0
-                    if msg["body"]["t"] - self.lastActive[bid] > 60:
+                    if msg["body"]["t"] - self.lastActive[bid] > config["ignore_time"]:
                         self.lastActive[bid] = msg["body"]["t"]
                         bridge = b["friendly_name"]
                         email = b["email"]
