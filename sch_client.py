@@ -11,9 +11,6 @@ import requests
 import websocket
 import time
 import signal
-from twisted.internet import threads
-from twisted.internet import defer
-from twisted.internet import reactor
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -62,7 +59,6 @@ def sendMail(bid, sensor, to):
        
 def signalHandler(self, signal, frame):
     logging.debug("%s signalHandler received signal", ModuleName)
-    reactor.stop()
     exit()
 
 class Connection(object):
@@ -71,8 +67,6 @@ class Connection(object):
         self.readConfig()
         self.lastActive = {}
         logging.info(json.dumps(config, indent=4))
-        reactor.callInThread(self.connect)
-        reactor.run()
 
     def readConfig(self):
         global config
@@ -91,7 +85,6 @@ class Connection(object):
                 config[c] = True
             elif c.lower in ("false", "f", "0"):
                 config[c] = False
-        reactor.callLater(300, self.readConfig)
 
     def connect(self) :
         auth_url = "http://" + CB_ADDRESS + "/api/client/v1/client_auth/login/"
@@ -105,15 +98,23 @@ class Connection(object):
         websocket.enableTrace(True)
         self.ws = websocket.WebSocketApp(
                         ws_url,
-                        on_open   = self._onopen,
+                        on_open   = self.onopen,
+                        on_error = self.onerror,
+                        on_close = self.onclose,
                         header = ['sessionID: {0}'.format(sessionID)],
-                        on_message = self._onmessage)
+                        on_message = self.onmessage)
         self.ws.run_forever()
 
-    def _onopen(self, ws):
+    def onopen(self, ws):
         logging.debug("on_open")
 
-    def _onmessage(self, ws, message):
+    def onclose(self, ws):
+        logging.debug("on_close")
+
+    def onerror(self, ws, error):
+        logging.error("Error: %s", str(error))
+
+    def onmessage(self, ws, message):
         msg = json.loads(message)
         logging.info("Message received: %s", json.dumps(msg, indent=4))
         if msg["body"] == "connected":
@@ -144,3 +145,4 @@ class Connection(object):
     
 if __name__ == '__main__':
     connection = Connection()
+    connection.connect()
