@@ -19,6 +19,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.MIMEImage import MIMEImage
 import subprocess
+import logging
 
 config = {}
 # Production
@@ -27,6 +28,8 @@ KEY                 = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62Chf
 START_DELAY         = 60
 SWITCH_INTERVAL     = 60
 DESTINATION         = "BID27/AID10"
+CB_LOGGING_LEVEL    = "INFO"
+CB_LOGFILE          = "sch_client.log"
 
 def sendMail(bid, sensor, to):
     user = config["user"]
@@ -54,35 +57,35 @@ def sendMail(bid, sensor, to):
     mail.starttls()
     mail.login(user, password)
     mail.sendmail(user, recipients, msg.as_string())
-    print "Sent mail"
+    logging.debug("Sent mail")
     mail.quit()
        
-    def signalHandler(self, signal, frame):
-        logging.debug("%s signalHandler received signal", ModuleName)
-        reactor.stop()
-        exit()
+def signalHandler(self, signal, frame):
+    logging.debug("%s signalHandler received signal", ModuleName)
+    reactor.stop()
+    exit()
 
 class Connection(object):
     def __init__(self):
-        self.boilerState = 0
+        logging.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
         self.readConfig()
         self.lastActive = {}
-        print(json.dumps(config, indent=4))
+        logging.info(json.dumps(config, indent=4))
         reactor.callInThread(self.connect)
         reactor.run()
 
     def readConfig(self):
         global config
-        subprocess.call(["git", "pull"])
+        #subprocess.call(["git", "pull"])
         configFile = "sch_client.config"
         try:
             with open(configFile, 'r') as f:
                 newConfig = json.load(f)
-                print "Read sch_app.config"
+                logging.info( "Read sch_app.config")
                 config.update(newConfig)
         except Exception as ex:
-            print "sch_app.config does not exist or file is corrupt"
-            print "Exception: " + str(type(ex)) + str(ex.args)
+            logging.warning("sch_app.config does not exist or file is corrupt")
+            logging.warning("Exception: %s %s", str(type(ex)), str(ex.args))
         for c in config:
             if c.lower in ("true", "t", "1"):
                 config[c] = True
@@ -108,44 +111,36 @@ class Connection(object):
         self.ws.run_forever()
 
     def _onopen(self, ws):
-        print "on_open"
+        logging.debug("on_open")
 
     def _onmessage(self, ws, message):
         msg = json.loads(message)
-        print "Message received:"
-        print(json.dumps(msg, indent=4))
+        logging.info("Message received: %s", json.dumps(msg, indent=4))
         if msg["body"] == "connected":
-            print "Connected to ContinuumBridge"
+            logging.info("Connected to ContinuumBridge")
         elif msg["body"]["m"] == "alarm":
             bid = msg["source"].split("/")[0]
             found = False
             for b in config["bridges"]:
                 if b["bid"] == bid:
-                    #print("Found: ", json.dumps(b, indent=4))
-                    if bid not in self.lastActive:
-                        self.lastActive[bid] = 0
-                    if msg["body"]["t"] - self.lastActive[bid] > config["ignore_time"]:
-                        self.lastActive[bid] = msg["body"]["t"]
-                        bridge = b["friendly_name"]
-                        email = b["email"]
-                        found = True
-                        break
-                    else:
-                        print "More activity within time window for ", bid
+                    self.lastActive[bid] = msg["body"]["t"]
+                    bridge = b["friendly_name"]
+                    email = b["email"]
+                    found = True
+                    break
             if found:
                 sendMail(bridge, msg["body"]["s"], email)
 
-            ack = {
-                    "source": config["cid"],
-                    "destination": msg["source"],
-                    "body": {
-                                "n": msg["body"]["n"]
-                            }
-                  }
-            #print "Sending: "
-            #print(json.dumps(ack, indent=4))
-            self.ws.send(json.dumps(ack))
-            #print "Message sent"
+                ack = {
+                        "source": config["cid"],
+                        "destination": msg["source"],
+                        "body": {
+                                    "n": msg["body"]["n"]
+                                }
+                      }
+                self.ws.send(json.dumps(ack))
+            else:
+                logging.warning("Message from unknown bridge: %s", bid)
     
 if __name__ == '__main__':
     connection = Connection()
