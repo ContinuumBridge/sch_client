@@ -17,6 +17,8 @@ from email.mime.text import MIMEText
 from email.MIMEImage import MIMEImage
 import subprocess
 import logging
+import twilio
+import twilio.rest
 
 config = {}
 # Production
@@ -27,6 +29,10 @@ SWITCH_INTERVAL     = 60
 DESTINATION         = "BID27/AID10"
 CB_LOGGING_LEVEL    = "INFO"
 CB_LOGFILE          = "sch_client.log"
+TWILIO_ACCOUNT_SID  = "AC72bb42908df845e8a1996fee487215d8" 
+TWILIO_AUTH_TOKEN   = "717534e8d9e704573e65df65f6f08d54"
+TWILIO_PHONE_NUMBER = "+441183241580"
+ 
 
 def sendMail(bid, sensor, to):
     user = config["user"]
@@ -57,16 +63,35 @@ def sendMail(bid, sensor, to):
     logging.debug("Sent mail")
     mail.quit()
        
-def signalHandler(self, signal, frame):
-    logging.debug("%s signalHandler received signal", ModuleName)
-    exit()
+def sendSMS(bid, sensor, to):
+    numbers = to.split(",")
+    for n in numbers:
+       try:
+           client = twilio.rest.TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+           message = client.messages.create(
+               body = "Night wandering alert for " + bid + ", detected by " + sensor,
+               to = n,
+               from_ = TWILIO_PHONE_NUMBER
+           )
+           sid = message.sid
+           logging.debug("Sent sms for bridge %s to %s", bid, str(n))
+       except Exception as ex:
+           logging.warning("sendSMS, unable to send message. BID: %s, number: %s", bid, str(n))
+           logging.warning("%s Exception: %s %s", ModuleName, type(ex), str(ex.args))
 
 class Connection(object):
     def __init__(self):
+        signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
+        signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
         logging.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
         self.readConfig()
         self.lastActive = {}
+        self.reconnects = 0
         logging.info(json.dumps(config, indent=4))
+
+    def signalHandler(self, signal, frame):
+        logging.debug("%s signalHandler received signal", ModuleName)
+        exit()
 
     def readConfig(self):
         global config
@@ -86,37 +111,58 @@ class Connection(object):
             elif c.lower in ("false", "f", "0"):
                 config[c] = False
 
-    def connect(self) :
-        auth_url = "http://" + CB_ADDRESS + "/api/client/v1/client_auth/login/"
-        auth_data = '{"key": "' + KEY + '"}'
-        auth_headers = {'content-type': 'application/json'}
-        response = requests.post(auth_url, data=auth_data, headers=auth_headers)
-        self.cbid = json.loads(response.text)['cbid']
-        sessionID = response.cookies['sessionid']
+    def authorise(self):
+        try:
+            auth_url = "http://" + CB_ADDRESS + "/api/client/v1/client_auth/login/"
+            auth_data = '{"key": "' + KEY + '"}'
+            auth_headers = {'content-type': 'application/json'}
+            response = requests.post(auth_url, data=auth_data, headers=auth_headers)
+            self.cbid = json.loads(response.text)['cbid']
+            self.sessionID = response.cookies['sessionid']
+            self.ws_url = "ws://" + CB_ADDRESS + ":7522/"
+        except Exception as ex:
+            logging.warning("sch_app. Unable to authorise with server")
+            logging.warning("Exception: %s %s", str(type(ex)), str(ex.args))
 
-        ws_url = "ws://" + CB_ADDRESS + ":7522/"
-        websocket.enableTrace(True)
-        self.ws = websocket.WebSocketApp(
-                        ws_url,
-                        on_open   = self.onopen,
-                        on_error = self.onerror,
-                        on_close = self.onclose,
-                        header = ['sessionID: {0}'.format(sessionID)],
-                        on_message = self.onmessage)
-        self.ws.run_forever()
+    def connect(self):
+        try:
+            websocket.enableTrace(True)
+            self.ws = websocket.WebSocketApp(
+                            self.ws_url,
+                            on_open   = self.onopen,
+                            on_error = self.onerror,
+                            on_close = self.onclose,
+                            header = ['sessionID: {0}'.format(self.sessionID)],
+                            on_message = self.onmessage)
+            self.ws.run_forever()
+        except Exception as ex:
+            self.reconnects += 1
+            logging.warning("Websocket connection failed")
+            logging.warning("Exception: %s %s", type(ex), str(ex.args))
 
     def onopen(self, ws):
+        self.reconnects = 0
         logging.debug("on_open")
 
     def onclose(self, ws):
-        logging.debug("on_close")
+        if self.reconnects < 4:
+            logging.debug("on_close. Attempting to reconnect.")
+            self.connect()
+        else:
+            logging.error("Max number of reconnect tries exceeded. Reauthenticating.")
+            self.authorise()
+            self.connect()
 
     def onerror(self, ws, error):
         logging.error("Error: %s", str(error))
 
     def onmessage(self, ws, message):
-        msg = json.loads(message)
-        logging.info("Message received: %s", json.dumps(msg, indent=4))
+        try:
+            msg = json.loads(message)
+            logging.info("Message received: %s", json.dumps(msg, indent=4))
+        except Exception as ex:
+            logging.warning("sch_app. onmessage. Unable to load json")
+            logging.warning("Exception: %s %s", str(type(ex)), str(ex.args))
         if msg["body"] == "connected":
             logging.info("Connected to ContinuumBridge")
         elif msg["body"]["m"] == "alarm":
@@ -126,12 +172,14 @@ class Connection(object):
                 if b["bid"] == bid:
                     self.lastActive[bid] = msg["body"]["t"]
                     bridge = b["friendly_name"]
-                    email = b["email"]
+                    if "email" in b:
+                        email = b["email"]
+                        sendMail(bridge, msg["body"]["s"], b["email"])
+                    if "sms" in b:
+                        sendSMS(bridge, msg["body"]["s"], b["sms"])
                     found = True
                     break
             if found:
-                sendMail(bridge, msg["body"]["s"], email)
-
                 ack = {
                         "source": config["cid"],
                         "destination": msg["source"],
@@ -145,4 +193,5 @@ class Connection(object):
     
 if __name__ == '__main__':
     connection = Connection()
+    connection.authorise()
     connection.connect()
