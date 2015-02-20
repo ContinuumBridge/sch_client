@@ -33,13 +33,19 @@ TWILIO_ACCOUNT_SID  = "AC72bb42908df845e8a1996fee487215d8"
 TWILIO_AUTH_TOKEN   = "717534e8d9e704573e65df65f6f08d54"
 TWILIO_PHONE_NUMBER = "+441183241580"
  
+def nicetime(timeStamp):
+    localtime = time.localtime(timeStamp)
+    milliseconds = '%03d' % int((timeStamp - int(timeStamp)) * 1000)
+    now = time.strftime('%H:%M:%S, %d-%m-%Y', localtime)
+    return now
 
-def sendMail(bid, sensor, to):
+
+def sendMail(bid, sensor, to, timeStamp):
     user = config["user"]
     password = config["password"]
     # Create message container - the correct MIME type is multipart/alternative.
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = "Night Wandering Alert for " + bid
+    msg['Subject'] = "Night Wandering Alert for " + bid + " at " + nicetime(timeStamp)
     msg['From'] = config["from"]
     recipients = to.split(',')
     [p.strip(' ') for p in recipients]
@@ -48,7 +54,7 @@ def sendMail(bid, sensor, to):
     else:
         msg['To'] = ", ".join(recipients)
     # Create the body of the message (a plain-text and an HTML version).
-    text = "Activity detected from sensor: " + sensor + " \n"
+    text = "Activity detected from sensor: " + sensor + " at " + nicetime(timeStamp) + " \n"
     htmlText = text
     # Record the MIME types of both parts - text/plain and text/html.
     part1 = MIMEText(text, 'plain')
@@ -174,7 +180,7 @@ class Connection(object):
                     bridge = b["friendly_name"]
                     if "email" in b:
                         email = b["email"]
-                        sendMail(bridge, msg["body"]["s"], b["email"])
+                        sendMail(bridge, msg["body"]["s"], b["email"], msg["body"]["t"])
                     if "sms" in b:
                         sendSMS(bridge, msg["body"]["s"], b["sms"])
                     found = True
