@@ -5,7 +5,6 @@
 # Proprietary and confidential
 # Written by Peter Claydon
 #
-import httplib 
 import json
 import requests
 import websocket
@@ -19,11 +18,14 @@ import subprocess
 import logging
 import twilio
 import twilio.rest
+from twisted.internet import threads
+from twisted.internet import reactor, defer
 
 config = {}
 # Production
 CB_ADDRESS          = "portal.continuumbridge.com"
 KEY                 = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62ChfJse7cDo"
+DBURL               = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
 START_DELAY         = 60
 SWITCH_INTERVAL     = 60
 DESTINATION         = "BID27/AID10"
@@ -93,7 +95,10 @@ class Connection(object):
         self.readConfig()
         self.lastActive = {}
         self.reconnects = 0
+        self.reauthorise = 0
         logging.info(json.dumps(config, indent=4))
+        reactor.callLater(0.5, self.authorise)
+        reactor.run()
 
     def signalHandler(self, signal, frame):
         logging.debug("%s signalHandler received signal", ModuleName)
@@ -119,6 +124,7 @@ class Connection(object):
 
     def authorise(self):
         try:
+            self.reconnects = 0
             auth_url = "http://" + CB_ADDRESS + "/api/client/v1/client_auth/login/"
             auth_data = '{"key": "' + KEY + '"}'
             auth_headers = {'content-type': 'application/json'}
@@ -126,6 +132,7 @@ class Connection(object):
             self.cbid = json.loads(response.text)['cbid']
             self.sessionID = response.cookies['sessionid']
             self.ws_url = "ws://" + CB_ADDRESS + ":7522/"
+            reactor.callLater(0.1, self.connect)
         except Exception as ex:
             logging.warning("sch_app. Unable to authorise with server")
             logging.warning("Exception: %s %s", str(type(ex)), str(ex.args))
@@ -153,11 +160,10 @@ class Connection(object):
     def onclose(self, ws):
         if self.reconnects < 4:
             logging.debug("on_close. Attempting to reconnect.")
-            self.connect()
+            reactor.callLater((self.reconnects+1)*5, self.connect)
         else:
             logging.error("Max number of reconnect tries exceeded. Reauthenticating.")
-            self.authorise()
-            self.connect()
+            reactor.callLater(5, self.authorise)
 
     def onerror(self, ws, error):
         logging.error("Error: %s", str(error))
@@ -196,8 +202,43 @@ class Connection(object):
                 self.ws.send(json.dumps(ack))
             else:
                 logging.warning("Message from unknown bridge: %s", bid)
-    
+        elif msg["body"]["m"] == "data":
+            logging.info("Data messsage received")
+            dat = msg["body"]["d"]
+            """
+            for d in dat:
+                d["columns"] = ["time", "value"]
+                dd = [d]
+                logging.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
+                url = DBURL + "db/Bridges/series?u=root&p=27ff25609da60f2d"
+                headers = {'Content-Type': 'application/json'}
+                status = 0
+                logging.debug("url: %s", url)
+                r = requests.post(url, data=json.dumps(dd), headers=headers)
+                status = r.status_code
+                if status !=200:
+                    logging.warning("POSTing failed, status: %s", status)
+            """
+            for d in dat:
+                d["columns"] = ["time", "value"]
+            dd = dat
+            logging.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
+            url = DBURL + "db/Bridges/series?u=root&p=27ff25609da60f2d"
+            headers = {'Content-Type': 'application/json'}
+            status = 0
+            logging.debug("url: %s", url)
+            r = requests.post(url, data=json.dumps(dd), headers=headers)
+            status = r.status_code
+            if status !=200:
+                logging.warning("POSTing failed, status: %s", status)
+            ack = {
+                    "source": config["cid"],
+                    "destination": msg["source"],
+                    "body": {
+                                "n": msg["body"]["n"]
+                            }
+                  }
+            self.ws.send(json.dumps(ack))
+
 if __name__ == '__main__':
     connection = Connection()
-    connection.authorise()
-    connection.connect()
