@@ -5,6 +5,10 @@
 # Proprietary and confidential
 # Written by Peter Claydon
 #
+"""
+Bit of a botch for now. Just stick actions from incoming requests into threads.
+"""
+
 import json
 import requests
 import websocket
@@ -41,13 +45,15 @@ def nicetime(timeStamp):
     now = time.strftime('%H:%M:%S, %d-%m-%Y', localtime)
     return now
 
-
-def sendMail(bid, sensor, to, timeStamp):
+def sendMail(bid, sensors, to, timeStamp, intruder=False):
     user = config["user"]
     password = config["password"]
     # Create message container - the correct MIME type is multipart/alternative.
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = "Night Wandering Alert for " + bid + " at " + nicetime(timeStamp)
+    if intruder:
+        msg['Subject'] = "Intruder Alert for " + bid + " at " + nicetime(timeStamp)
+    else:
+        msg['Subject'] = "Night Wandering Alert for " + bid + " at " + nicetime(timeStamp)
     msg['From'] = config["from"]
     recipients = to.split(',')
     [p.strip(' ') for p in recipients]
@@ -56,7 +62,7 @@ def sendMail(bid, sensor, to, timeStamp):
     else:
         msg['To'] = ", ".join(recipients)
     # Create the body of the message (a plain-text and an HTML version).
-    text = "Activity detected from sensor: " + sensor + " at " + nicetime(timeStamp) + " \n"
+    text = "Activity detected from sensors: " + sensors + " at " + nicetime(timeStamp) + " \n"
     htmlText = text
     # Record the MIME types of both parts - text/plain and text/html.
     part1 = MIMEText(text, 'plain')
@@ -71,13 +77,33 @@ def sendMail(bid, sensor, to, timeStamp):
     logging.debug("Sent mail")
     mail.quit()
        
-def sendSMS(bid, sensor, to):
+def postData(dat, bid):
+    for b in config["bridges"]:
+        if b["bid"] == bid:
+            if "database" in b:
+                url = DBURL + "db/" + b["database"] + "/series?u=root&p=27ff25609da60f2d"
+            else:
+                url = DBURL + "db/Bridges/series?u=root&p=27ff25609da60f2d"
+            break
+    headers = {'Content-Type': 'application/json'}
+    status = 0
+    logging.debug("url: %s", url)
+    r = requests.post(url, data=json.dumps(dat), headers=headers)
+    status = r.status_code
+    if status !=200:
+        logging.warning("POSTing failed, status: %s", status)
+
+def sendSMS(bid, sensors, to, intruder=False):
     numbers = to.split(",")
     for n in numbers:
        try:
            client = twilio.rest.TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+           if intruder:
+               messageBody =  "Intruder alert for " + bid + ", detected by " + sensors
+           else:
+               messageBody =  "Night wandering alert for " + bid + ", detected by " + sensors
            message = client.messages.create(
-               body = "Night wandering alert for " + bid + ", detected by " + sensor,
+               body = messageBody,
                to = n,
                from_ = TWILIO_PHONE_NUMBER
            )
@@ -186,9 +212,34 @@ class Connection(object):
                     bridge = b["friendly_name"]
                     if "email" in b:
                         email = b["email"]
-                        sendMail(bridge, msg["body"]["s"], b["email"], msg["body"]["t"])
+                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"])
                     if "sms" in b:
-                        sendSMS(bridge, msg["body"]["s"], b["sms"])
+                        reactor.callInThread(sendSMS, bridge, msg["body"]["s"], b["sms"])
+                    found = True
+                    break
+            if found:
+                ack = {
+                        "source": config["cid"],
+                        "destination": msg["source"],
+                        "body": {
+                                    "n": msg["body"]["n"]
+                                }
+                      }
+                self.ws.send(json.dumps(ack))
+            else:
+                logging.warning("Message from unknown bridge: %s", bid)
+        elif msg["body"]["m"] == "intruder":
+            bid = msg["source"].split("/")[0]
+            found = False
+            for b in config["bridges"]:
+                if b["bid"] == bid:
+                    self.lastActive[bid] = msg["body"]["t"]
+                    bridge = b["friendly_name"]
+                    if "email" in b:
+                        email = b["email"]
+                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"], True)
+                    if "sms" in b:
+                        reactor.callInThread(sendSMS, bridge, msg["body"]["s"], b["sms"], True)
                     found = True
                     break
             if found:
@@ -204,33 +255,13 @@ class Connection(object):
                 logging.warning("Message from unknown bridge: %s", bid)
         elif msg["body"]["m"] == "data":
             logging.info("Data messsage received")
+            bid = msg["source"].split("/")[0]
             dat = msg["body"]["d"]
-            """
-            for d in dat:
-                d["columns"] = ["time", "value"]
-                dd = [d]
-                logging.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
-                url = DBURL + "db/Bridges/series?u=root&p=27ff25609da60f2d"
-                headers = {'Content-Type': 'application/json'}
-                status = 0
-                logging.debug("url: %s", url)
-                r = requests.post(url, data=json.dumps(dd), headers=headers)
-                status = r.status_code
-                if status !=200:
-                    logging.warning("POSTing failed, status: %s", status)
-            """
             for d in dat:
                 d["columns"] = ["time", "value"]
             dd = dat
             logging.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
-            url = DBURL + "db/Bridges/series?u=root&p=27ff25609da60f2d"
-            headers = {'Content-Type': 'application/json'}
-            status = 0
-            logging.debug("url: %s", url)
-            r = requests.post(url, data=json.dumps(dd), headers=headers)
-            status = r.status_code
-            if status !=200:
-                logging.warning("POSTing failed, status: %s", status)
+            reactor.callInThread(postData, dd, bid)
             ack = {
                     "source": config["cid"],
                     "destination": msg["source"],
