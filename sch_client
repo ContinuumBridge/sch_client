@@ -1,0 +1,46 @@
+#!/bin/bash
+# /etc/init.d/sch_client
+
+### BEGIN INIT INFO
+# Provides:          sch_client
+# Required-Start:    $remote_fs $syslog
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Simple script to start a program at boot
+# Description:       A simple script from www.stuffaboutcode.com which will start / stop a program a boot / shutdown.
+### END INIT INFO
+
+# If you want a command to always run, put it here
+NAME=sch_client
+PIDFILE=/var/run/$NAME.pid
+
+# Carry out specific functions when asked to by the system
+case "$1" in
+  start)
+        echo -n "Starting sch_client: "
+        cd /home/bridge/sch_client
+        /home/bridge/sch_client/sch_client.py >> /home/bridge/sch_client/shell.log 2>&1 &
+        sch_pid=$!
+        echo $sch_pid > $PIDFILE
+        echo 'done'
+	;;
+  stop)
+	echo -n "Stopping sch_client: "
+	start-stop-daemon --stop --signal 9 --quiet --pidfile $PIDFILE
+	rm $PIDFILE
+	echo "done."
+	;;
+  restart)
+	echo "Restarting sch_client: "
+	sh $0 stop
+	sleep 5
+	sh $0 start
+	;;
+  *)
+    echo "Usage: /etc/init.d/sch_client {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
