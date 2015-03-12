@@ -20,7 +20,7 @@ case "$1" in
   start)
         echo -n "Starting sch_client: "
         cd /home/bridge/sch_client
-        /home/bridge/sch_client/sch_client.py >> /home/bridge/sch_client/shell.log 2>&1 &
+        su -l bridge -c "/home/bridge/sch_client/sch_client.py >> /home/bridge/sch_client/shell.log 2>&1 &"
         sch_pid=$!
         echo $sch_pid > $PIDFILE
         echo 'done'

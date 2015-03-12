@@ -24,20 +24,19 @@ import twilio
 import twilio.rest
 from twisted.internet import threads
 from twisted.internet import reactor, defer
+from subprocess import call
 
 config = {}
 # Production
-CB_ADDRESS          = "portal.continuumbridge.com"
-KEY                 = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62ChfJse7cDo"
-DBURL               = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
-START_DELAY         = 60
-SWITCH_INTERVAL     = 60
-DESTINATION         = "BID27/AID10"
-CB_LOGGING_LEVEL    = "INFO"
-CB_LOGFILE          = "sch_client.log"
-TWILIO_ACCOUNT_SID  = "AC72bb42908df845e8a1996fee487215d8" 
-TWILIO_AUTH_TOKEN   = "717534e8d9e704573e65df65f6f08d54"
-TWILIO_PHONE_NUMBER = "+441183241580"
+CB_ADDRESS            = "portal.continuumbridge.com"
+KEY                   = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62ChfJse7cDo"
+DBURL                 = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
+CB_LOGGING_LEVEL      = "INFO"
+CB_LOGFILE            = "/home/bridge/sch_client/sch_client.log"
+TWILIO_ACCOUNT_SID    = "AC72bb42908df845e8a1996fee487215d8" 
+TWILIO_AUTH_TOKEN     = "717534e8d9e704573e65df65f6f08d54"
+TWILIO_PHONE_NUMBER   = "+441183241580"
+CONFIG_READ_INTERVAL  = 600
  
 def nicetime(timeStamp):
     localtime = time.localtime(timeStamp)
@@ -123,6 +122,7 @@ class Connection(object):
         self.reconnects = 0
         self.reauthorise = 0
         logging.info(json.dumps(config, indent=4))
+        reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
         reactor.callLater(0.5, self.authorise)
         reactor.run()
 
@@ -132,13 +132,16 @@ class Connection(object):
 
     def readConfig(self):
         global config
-        #subprocess.call(["git", "pull"])
-        configFile = "sch_client.config"
+        call("/home/bridge/sch_client/sch_git.sh", shell=True)
+        print "git called"
+        configFile = "/home/bridge/sch_client/sch_client.config"
         try:
             with open(configFile, 'r') as f:
                 newConfig = json.load(f)
                 logging.info( "Read sch_app.config")
                 config.update(newConfig)
+                logging.info("Config read")
+                print "config file read"
         except Exception as ex:
             logging.warning("sch_app.config does not exist or file is corrupt")
             logging.warning("Exception: %s %s", str(type(ex)), str(ex.args))
@@ -147,6 +150,10 @@ class Connection(object):
                 config[c] = True
             elif c.lower in ("false", "f", "0"):
                 config[c] = False
+
+    def readConfigLoop(self):
+        self.readConfig()
+        reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
 
     def authorise(self):
         try:
