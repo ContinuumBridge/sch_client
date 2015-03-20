@@ -1,3 +1,3 @@
 #!/bin/bash
-cd /home/bridge/sch_client
+cd /home/ubuntu/sch_client
 git pull

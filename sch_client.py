@@ -28,11 +28,12 @@ from subprocess import call
 
 config = {}
 # Production
+HOME                  = "/home/ubuntu/"
 CB_ADDRESS            = "portal.continuumbridge.com"
 KEY                   = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62ChfJse7cDo"
 DBURL                 = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
 CB_LOGGING_LEVEL      = "INFO"
-CB_LOGFILE            = "/home/bridge/sch_client/sch_client.log"
+CB_LOGFILE            = HOME + "sch_client/sch_client.log"
 TWILIO_ACCOUNT_SID    = "AC72bb42908df845e8a1996fee487215d8" 
 TWILIO_AUTH_TOKEN     = "717534e8d9e704573e65df65f6f08d54"
 TWILIO_PHONE_NUMBER   = "+441183241580"
@@ -132,9 +133,9 @@ class Connection(object):
 
     def readConfig(self):
         global config
-        call("/home/bridge/sch_client/sch_git.sh", shell=True)
+        call(HOME + "sch_client/sch_git.sh", shell=True)
         print "git called"
-        configFile = "/home/bridge/sch_client/sch_client.config"
+        configFile = HOME + "sch_client/sch_client.config"
         try:
             with open(configFile, 'r') as f:
                 newConfig = json.load(f)
