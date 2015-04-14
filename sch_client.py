@@ -78,6 +78,7 @@ def sendMail(bid, sensors, to, timeStamp, intruder=False):
     mail.quit()
        
 def postData(dat, bid):
+    url = ""
     for b in config["bridges"]:
         if b["bid"] == bid:
             if "database" in b:
