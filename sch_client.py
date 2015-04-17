@@ -130,7 +130,7 @@ class Connection(object):
 
     def signalHandler(self, signal, frame):
         logging.debug("%s signalHandler received signal", ModuleName)
-        exit()
+        reactor.stop()
 
     def readConfig(self):
         global config
