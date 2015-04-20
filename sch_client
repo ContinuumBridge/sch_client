@@ -20,7 +20,8 @@ case "$1" in
   start)
         echo -n "Starting sch_client: "
         cd /home/ubuntu/sch_client
-        su -l ubuntu -c "/home/ubuntu/sch_client/sch_client.py >> /home/ubuntu/sch_client/shell.log 2>&1 &"
+        #su -l ubuntu -c "/home/ubuntu/sch_client/sch_client.py >> /home/ubuntu/sch_client/shell.log 2>&1 &"
+        su -l ubuntu -c "/home/ubuntu/sch_client/sch_client.py >> /dev/null 2>&1 &"
         sch_pid=$!
         echo $sch_pid > $PIDFILE
         echo 'done'
