@@ -40,6 +40,13 @@ TWILIO_AUTH_TOKEN     = "717534e8d9e704573e65df65f6f08d54"
 TWILIO_PHONE_NUMBER   = "+441183241580"
 CONFIG_READ_INTERVAL  = 600
  
+logger = logging.getLogger('Logger')
+logger.setLevel(CB_LOGGING_LEVEL)
+handler = logging.handlers.RotatingFileHandler(CB_LOGFILE, maxBytes=10000, backupCount=5)
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
 def nicetime(timeStamp):
     localtime = time.localtime(timeStamp)
     milliseconds = '%03d' % int((timeStamp - int(timeStamp)) * 1000)
@@ -75,7 +82,7 @@ def sendMail(bid, sensors, to, timeStamp, intruder=False):
     mail.starttls()
     mail.login(user, password)
     mail.sendmail(user, recipients, msg.as_string())
-    self.logger.debug("Sent mail")
+    logger.debug("Sent mail")
     mail.quit()
        
 def postData(dat, bid):
@@ -89,11 +96,11 @@ def postData(dat, bid):
             break
     headers = {'Content-Type': 'application/json'}
     status = 0
-    self.logger.debug("url: %s", url)
+    logger.debug("url: %s", url)
     r = requests.post(url, data=json.dumps(dat), headers=headers)
     status = r.status_code
     if status !=200:
-        self.logger.warning("POSTing failed, status: %s", status)
+        logger.warning("POSTing failed, status: %s", status)
 
 def sendSMS(bid, sensors, to, intruder=False):
     numbers = to.split(",")
@@ -110,33 +117,27 @@ def sendSMS(bid, sensors, to, intruder=False):
                from_ = TWILIO_PHONE_NUMBER
            )
            sid = message.sid
-           self.logger.debug("Sent sms for bridge %s to %s", bid, str(n))
+           logger.debug("Sent sms for bridge %s to %s", bid, str(n))
        except Exception as ex:
-           self.logger.warning("sendSMS, unable to send message. BID: %s, number: %s", bid, str(n))
-           self.logger.warning("%s Exception: %s %s", ModuleName, type(ex), str(ex.args))
+           logger.warning("sendSMS, unable to send message. BID: %s, number: %s", bid, str(n))
+           logger.warning("%s Exception: %s %s", ModuleName, type(ex), str(ex.args))
 
 class Connection(object):
     def __init__(self):
         signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
         signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
-        self.logger = logging.getLogger('Logger')
-        self.logger.setLevel(CB_LOGGING_LEVEL)
-        handler = logging.handlers.RotatingFileHandler(CB_LOGFILE, maxBytes=10000, backupCount=5)
-        self.formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-        self.handler.setFormatter(self.formatter)
-        self.logger.addHandler(self.handler)
-        #self.logger.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
+        #logger.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
         self.readConfig()
         self.lastActive = {}
         self.reconnects = 0
         self.reauthorise = 0
-        self.logger.info(json.dumps(config, indent=4))
+        logger.info(json.dumps(config, indent=4))
         reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
         reactor.callLater(0.5, self.authorise)
         reactor.run()
 
     def signalHandler(self, signal, frame):
-        self.logger.debug("%s signalHandler received signal", ModuleName)
+        logger.debug("%s signalHandler received signal", ModuleName)
         reactor.stop()
 
     def readConfig(self):
@@ -147,13 +148,13 @@ class Connection(object):
         try:
             with open(configFile, 'r') as f:
                 newConfig = json.load(f)
-                self.logger.info( "Read sch_app.config")
+                logger.info( "Read sch_app.config")
                 config.update(newConfig)
-                self.logger.info("Config read")
+                logger.info("Config read")
                 print "config file read"
         except Exception as ex:
-            self.logger.warning("sch_app.config does not exist or file is corrupt")
-            self.logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
+            logger.warning("sch_app.config does not exist or file is corrupt")
+            logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
         for c in config:
             if c.lower in ("true", "t", "1"):
                 config[c] = True
@@ -176,8 +177,8 @@ class Connection(object):
             self.ws_url = "ws://" + CB_ADDRESS + ":7522/"
             reactor.callLater(0.1, self.connect)
         except Exception as ex:
-            self.logger.warning("sch_app. Unable to authorise with server")
-            self.logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
+            logger.warning("sch_app. Unable to authorise with server")
+            logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
 
     def connect(self):
         try:
@@ -192,33 +193,33 @@ class Connection(object):
             self.ws.run_forever()
         except Exception as ex:
             self.reconnects += 1
-            self.logger.warning("Websocket connection failed")
-            self.logger.warning("Exception: %s %s", type(ex), str(ex.args))
+            logger.warning("Websocket connection failed")
+            logger.warning("Exception: %s %s", type(ex), str(ex.args))
 
     def onopen(self, ws):
         self.reconnects = 0
-        self.logger.debug("on_open")
+        logger.debug("on_open")
 
     def onclose(self, ws):
         if self.reconnects < 4:
-            self.logger.debug("on_close. Attempting to reconnect.")
+            logger.debug("on_close. Attempting to reconnect.")
             reactor.callLater((self.reconnects+1)*5, self.connect)
         else:
-            self.logger.error("Max number of reconnect tries exceeded. Reauthenticating.")
+            logger.error("Max number of reconnect tries exceeded. Reauthenticating.")
             reactor.callLater(5, self.authorise)
 
     def onerror(self, ws, error):
-        self.logger.error("Error: %s", str(error))
+        logger.error("Error: %s", str(error))
 
     def onmessage(self, ws, message):
         try:
             msg = json.loads(message)
-            self.logger.info("Message received: %s", json.dumps(msg, indent=4))
+            logger.info("Message received: %s", json.dumps(msg, indent=4))
         except Exception as ex:
-            self.logger.warning("sch_app. onmessage. Unable to load json")
-            self.logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
+            logger.warning("sch_app. onmessage. Unable to load json")
+            logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
         if msg["body"] == "connected":
-            self.logger.info("Connected to ContinuumBridge")
+            logger.info("Connected to ContinuumBridge")
         elif msg["body"]["m"] == "alarm":
             bid = msg["source"].split("/")[0]
             found = False
@@ -243,7 +244,7 @@ class Connection(object):
                       }
                 self.ws.send(json.dumps(ack))
             else:
-                self.logger.warning("Message from unknown bridge: %s", bid)
+                logger.warning("Message from unknown bridge: %s", bid)
         elif msg["body"]["m"] == "intruder":
             bid = msg["source"].split("/")[0]
             found = False
@@ -268,15 +269,15 @@ class Connection(object):
                       }
                 self.ws.send(json.dumps(ack))
             else:
-                self.logger.warning("Message from unknown bridge: %s", bid)
+                logger.warning("Message from unknown bridge: %s", bid)
         elif msg["body"]["m"] == "data":
-            self.logger.info("Data messsage received")
+            logger.info("Data messsage received")
             bid = msg["source"].split("/")[0]
             dat = msg["body"]["d"]
             for d in dat:
                 d["columns"] = ["time", "value"]
             dd = dat
-            self.logger.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
+            logger.debug("Posting to InfluxDB: %s", json.dumps(dd, indent=4))
             reactor.callInThread(postData, dd, bid)
             ack = {
                     "source": config["cid"],

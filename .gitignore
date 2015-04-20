@@ -4,6 +4,7 @@ build
 *.csv
 *.swp
 *.log
+*.log.*
 
 # C extensions
 *.so
