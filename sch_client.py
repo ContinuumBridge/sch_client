@@ -119,12 +119,12 @@ class Connection(object):
     def __init__(self):
         signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
         signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
-        self.logger = self.logger.getLogger('MyLogger')
+        self.logger = logging.getLogger('Logger')
         self.logger.setLevel(CB_LOGGING_LEVEL)
-        handler = self.logger.handlers.RotatingFileHandler(CB_LOGFILE, maxBytes=10000, backupCount=5)
-        self.formatter = self.logger.Formatter('%(asctime)s %(levelname)s %(message)s')
-        self.handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
+        handler = logging.handlers.RotatingFileHandler(CB_LOGFILE, maxBytes=10000, backupCount=5)
+        self.formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+        self.handler.setFormatter(self.formatter)
+        self.logger.addHandler(self.handler)
         #self.logger.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
         self.readConfig()
         self.lastActive = {}
