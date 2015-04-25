@@ -102,15 +102,11 @@ def postData(dat, bid):
     if status !=200:
         logger.warning("POSTing failed, status: %s", status)
 
-def sendSMS(bid, sensors, to, intruder=False):
+def sendSMS(bid, messageBody, to):
     numbers = to.split(",")
     for n in numbers:
        try:
            client = twilio.rest.TwilioRestClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-           if intruder:
-               messageBody =  "Intruder alert for " + bid + ", detected by " + sensors
-           else:
-               messageBody =  "Night wandering alert for " + bid + ", detected by " + sensors
            message = client.messages.create(
                body = messageBody,
                to = n,
@@ -120,7 +116,7 @@ def sendSMS(bid, sensors, to, intruder=False):
            logger.debug("Sent sms for bridge %s to %s", bid, str(n))
        except Exception as ex:
            logger.warning("sendSMS, unable to send message. BID: %s, number: %s", bid, str(n))
-           logger.warning("%s Exception: %s %s", ModuleName, type(ex), str(ex.args))
+           logger.warning("%s Exception: %s %s", type(ex), str(ex.args))
 
 class Connection(object):
     def __init__(self):
@@ -137,7 +133,7 @@ class Connection(object):
         reactor.run()
 
     def signalHandler(self, signal, frame):
-        logger.debug("%s signalHandler received signal", ModuleName)
+        logger.debug("%s signalHandler received signal")
         reactor.stop()
 
     def readConfig(self):
@@ -227,11 +223,12 @@ class Connection(object):
                 if b["bid"] == bid:
                     self.lastActive[bid] = msg["body"]["t"]
                     bridge = b["friendly_name"]
+                    messageBody =  "Night wandering alert for " + bridge + ", detected by " + msg["body"]["s"]
                     if "email" in b:
                         email = b["email"]
                         reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"])
                     if "sms" in b:
-                        reactor.callInThread(sendSMS, bridge, msg["body"]["s"], b["sms"])
+                        reactor.callInThread(sendSMS, bridge, messageBody, b["sms"])
                     found = True
                     break
             if found:
@@ -252,11 +249,38 @@ class Connection(object):
                 if b["bid"] == bid:
                     self.lastActive[bid] = msg["body"]["t"]
                     bridge = b["friendly_name"]
+                    messageBody =  "Intruder alert for " + bridge + ", detected by " + msg["body"]["s"]
                     if "email" in b:
                         email = b["email"]
-                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"], True)
+                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"], "intruder")
                     if "sms" in b:
-                        reactor.callInThread(sendSMS, bridge, msg["body"]["s"], b["sms"], True)
+                        reactor.callInThread(sendSMS, bridge, messageBody, b["sms"])
+                    found = True
+                    break
+            if found:
+                ack = {
+                        "source": config["cid"],
+                        "destination": msg["source"],
+                        "body": {
+                                    "n": msg["body"]["n"]
+                                }
+                      }
+                self.ws.send(json.dumps(ack))
+            else:
+                logger.warning("Message from unknown bridge: %s", bid)
+        elif msg["body"]["m"] == "button":
+            bid = msg["source"].split("/")[0]
+            found = False
+            for b in config["bridges"]:
+                if b["bid"] == bid:
+                    self.lastActive[bid] = msg["body"]["t"]
+                    bridge = b["friendly_name"]
+                    messageBody =  bridge + ". " +  msg["body"]["s"] + " pressed."
+                    if "email" in b:
+                        email = b["email"]
+                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"], "intruder")
+                    if "sms" in b:
+                        reactor.callInThread(sendSMS, bridge, messageBody, b["sms"])
                     found = True
                     break
             if found:
