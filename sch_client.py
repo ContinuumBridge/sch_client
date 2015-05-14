@@ -25,7 +25,8 @@ import twilio
 import twilio.rest
 from twisted.internet import threads
 from twisted.internet import reactor, defer
-from subprocess import call
+from subprocess import check_output
+import os.path
 
 config = {}
 # Production
@@ -33,7 +34,7 @@ HOME                  = "/home/ubuntu/"
 CB_ADDRESS            = "portal.continuumbridge.com"
 KEY                   = "df2a0c10/QLjOvOvIk4qD8Pe9eo4daJl+5CM1RvtNXDk5lfzPMHA62ChfJse7cDo"
 DBURL                 = "http://onepointtwentyone-horsebrokedown-1.c.influxdb.com:8086/"
-CB_LOGGING_LEVEL      = "INFO"
+CB_LOGGING_LEVEL      = "DEBUG"
 CB_LOGFILE            = HOME + "sch_client/sch_client.log"
 TWILIO_ACCOUNT_SID    = "AC72bb42908df845e8a1996fee487215d8" 
 TWILIO_AUTH_TOKEN     = "717534e8d9e704573e65df65f6f08d54"
@@ -53,15 +54,12 @@ def nicetime(timeStamp):
     now = time.strftime('%H:%M:%S, %d-%m-%Y', localtime)
     return now
 
-def sendMail(bid, sensors, to, timeStamp, intruder=False):
+def sendMail(to, subject, body):
     user = config["user"]
     password = config["password"]
     # Create message container - the correct MIME type is multipart/alternative.
     msg = MIMEMultipart('alternative')
-    if intruder:
-        msg['Subject'] = "Intruder Alert for " + bid + " at " + nicetime(timeStamp)
-    else:
-        msg['Subject'] = "Night Wandering Alert for " + bid + " at " + nicetime(timeStamp)
+    msg['Subject'] = subject
     msg['From'] = config["from"]
     recipients = to.split(',')
     [p.strip(' ') for p in recipients]
@@ -70,7 +68,7 @@ def sendMail(bid, sensors, to, timeStamp, intruder=False):
     else:
         msg['To'] = ", ".join(recipients)
     # Create the body of the message (a plain-text and an HTML version).
-    text = "Activity detected from sensors: " + sensors + " at " + nicetime(timeStamp) + " \n"
+    text = body + " \n"
     htmlText = text
     # Record the MIME types of both parts - text/plain and text/html.
     part1 = MIMEText(text, 'plain')
@@ -122,43 +120,48 @@ class Connection(object):
     def __init__(self):
         signal.signal(signal.SIGINT, self.signalHandler)  # For catching SIGINT
         signal.signal(signal.SIGTERM, self.signalHandler)  # For catching SIGTERM
-        #logger.basicConfig(filename=CB_LOGFILE,level=CB_LOGGING_LEVEL,format='%(asctime)s %(levelname)s: %(message)s')
-        self.readConfig()
         self.lastActive = {}
         self.reconnects = 0
         self.reauthorise = 0
-        logger.info(json.dumps(config, indent=4))
+        self.gitPull()
+        self.readConfig(True)
         reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
-        reactor.callLater(0.5, self.authorise)
+        reactor.callLater(1, self.authorise)
         reactor.run()
 
     def signalHandler(self, signal, frame):
-        logger.debug("%s signalHandler received signal")
+        logger.debug("signalHandler received signal")
         reactor.stop()
 
-    def readConfig(self):
-        global config
-        call(HOME + "sch_client/sch_git.sh", shell=True)
-        print "git called"
+    def gitPull(self):
+        s = check_output(HOME + "sch_client/sch_git.sh", shell=True)
+        logger.debug("gitPull, s: %s", str(s))
+
+    def readConfig(self, forceRead=False):
         configFile = HOME + "sch_client/sch_client.config"
-        try:
-            with open(configFile, 'r') as f:
-                newConfig = json.load(f)
-                logger.info( "Read sch_app.config")
-                config.update(newConfig)
-                logger.info("Config read")
-                print "config file read"
-        except Exception as ex:
-            logger.warning("sch_app.config does not exist or file is corrupt")
-            logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
-        for c in config:
-            if c.lower in ("true", "t", "1"):
-                config[c] = True
-            elif c.lower in ("false", "f", "0"):
-                config[c] = False
+        if time.time() - os.path.getmtime(configFile) < 600 or forceRead:
+            logger.debug("actuallyReadConfig. Reading config")
+            global config
+            try:
+                with open(configFile, 'r') as f:
+                    newConfig = json.load(f)
+                    logger.info( "Read sch_app.config")
+                    config.update(newConfig)
+                    logger.info("Config read")
+            except Exception as ex:
+                logger.warning("sch_app.config does not exist or file is corrupt")
+                logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
+            for c in config:
+                if c.lower in ("true", "t", "1"):
+                    config[c] = True
+                elif c.lower in ("false", "f", "0"):
+                    config[c] = False
+            logger.info("Read new config: " + json.dumps(config, indent=4))
 
     def readConfigLoop(self):
-        self.readConfig()
+        logger.debug("readConfigLoop")
+        reactor.callInThread(self.gitPull)
+        reactor.callLater(10, self.readConfig())
         reactor.callLater(CONFIG_READ_INTERVAL, self.readConfigLoop)
 
     def authorise(self):
@@ -214,34 +217,45 @@ class Connection(object):
         except Exception as ex:
             logger.warning("sch_app. onmessage. Unable to load json")
             logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
+        if not "body" in msg:
+            logger.warning("sch_app. onmessage. message without body")
+            return
         if msg["body"] == "connected":
             logger.info("Connected to ContinuumBridge")
         elif msg["body"]["m"] == "alarm":
-            bid = msg["source"].split("/")[0]
-            found = False
-            for b in config["bridges"]:
-                if b["bid"] == bid:
-                    self.lastActive[bid] = msg["body"]["t"]
-                    bridge = b["friendly_name"]
-                    messageBody =  "Night wandering alert for " + bridge + ", detected by " + msg["body"]["s"]
-                    if "email" in b:
-                        email = b["email"]
-                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"])
-                    if "sms" in b:
-                        reactor.callInThread(sendSMS, bridge, messageBody, b["sms"])
-                    found = True
-                    break
-            if found:
-                ack = {
-                        "source": config["cid"],
-                        "destination": msg["source"],
-                        "body": {
-                                    "n": msg["body"]["n"]
-                                }
-                      }
-                self.ws.send(json.dumps(ack))
-            else:
-                logger.warning("Message from unknown bridge: %s", bid)
+            try:       
+                bid = msg["source"].split("/")[0]
+                found = False
+                for b in config["bridges"]:
+                    if b["bid"] == bid:
+                        self.lastActive[bid] = msg["body"]["t"]
+                        bridge = b["friendly_name"]
+                        if "a" in msg["body"]:
+                            body =  "Message from " + bridge + ": " + msg["body"]["a"]
+                            subject =  body
+                        else:
+                            body =  "Night wandering alert for " + bridge + ", detected by " + msg["body"]["s"]
+                            subject = "Night Wandering Alert for " + bridge + " at " + nicetime(msg["body"]["t"])
+                        if "email" in b:
+                            reactor.callInThread(sendMail, b["email"], subject, body)
+                        if "sms" in b:
+                            reactor.callInThread(sendSMS, bridge, body, b["sms"])
+                        found = True
+                        break
+                if found:
+                    ack = {
+                            "source": config["cid"],
+                            "destination": msg["source"],
+                            "body": {
+                                        "n": msg["body"]["n"]
+                                    }
+                          }
+                    self.ws.send(json.dumps(ack))
+                else:
+                    logger.warning("Message from unknown bridge: %s", bid)
+            except Exception as ex:
+                logger.warning("sch_app. onmessage. Problem processing alarm")
+                logger.warning("Exception: %s %s", str(type(ex)), str(ex.args))
         elif msg["body"]["m"] == "intruder":
             bid = msg["source"].split("/")[0]
             found = False
@@ -249,12 +263,12 @@ class Connection(object):
                 if b["bid"] == bid:
                     self.lastActive[bid] = msg["body"]["t"]
                     bridge = b["friendly_name"]
-                    messageBody =  "Intruder alert for " + bridge + ", detected by " + msg["body"]["s"]
+                    body =  "Intruder alert for " + bridge + ", detected by " + msg["body"]["s"]
+                    subject = "Intruder alert for " + bridge + " at " + nicetime(msg["body"]["t"])
                     if "email" in b:
-                        email = b["email"]
-                        reactor.callInThread(sendMail, bridge, msg["body"]["s"], b["email"], msg["body"]["t"], "intruder")
+                        reactor.callInThread(sendMail, b["email"], subject, body)
                     if "sms" in b:
-                        reactor.callInThread(sendSMS, bridge, messageBody, b["sms"])
+                        reactor.callInThread(sendSMS, bridge, body, b["sms"])
                     found = True
                     break
             if found:
