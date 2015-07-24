@@ -139,7 +139,7 @@ class Connection(object):
 
     def readConfig(self, forceRead=False):
         configFile = HOME + "sch_client/sch_client.config"
-        if time.time() - os.path.getmtime(configFile) < 600 or forceRead:
+        if time.time() - os.path.getmtime(configFile) < 700 or forceRead:
             logger.debug("actuallyReadConfig. Reading config")
             global config
             try:
@@ -225,9 +225,11 @@ class Connection(object):
         elif msg["body"]["m"] == "alarm":
             try:       
                 bid = msg["source"].split("/")[0]
+                logger.debug("bridge: " + bid)
                 found = False
                 for b in config["bridges"]:
                     if b["bid"] == bid:
+                        logger.debug("bridge found: " + bid)
                         self.lastActive[bid] = msg["body"]["t"]
                         bridge = b["friendly_name"]
                         if "a" in msg["body"]:
@@ -236,7 +238,9 @@ class Connection(object):
                         else:
                             body =  "Night wandering alert for " + bridge + ", detected by " + msg["body"]["s"]
                             subject = "Night Wandering Alert for " + bridge + " at " + nicetime(msg["body"]["t"])
+                        logger.debug("body: " + body)
                         if "email" in b:
+                            logger.debug("sending email")
                             reactor.callInThread(sendMail, b["email"], subject, body)
                         if "sms" in b:
                             reactor.callInThread(sendSMS, bridge, body, b["sms"])
